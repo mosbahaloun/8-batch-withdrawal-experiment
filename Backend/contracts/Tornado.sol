@@ -9,7 +9,7 @@ interface IVerifier {
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[24] memory input
+        uint[3] memory input  // Single withdrawal: 1 root + 1 nullifierHash + 1 recipient = 3
     ) external view returns (bool);
 }
 
@@ -133,43 +133,40 @@ contract Tornado is ReentrancyGuard {
         Candidate_check[cand] = true;
     }
 
-    // 8-note withdraw
+    // Single-note withdraw
     function withdraw(
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[24] memory input, // 8 roots | 8 nullifierHashes | 8 recipients
-        address payable[8] memory recipients // 8 recipients
+        uint[3] memory input, // Single note: root | nullifierHash | recipient
+        address payable recipient
     ) external payable nonReentrant {
         require(
             IVerifier(verifier).verifyProof(a, b, c, input),
             "invalid-proof"
         );
 
-        for (uint i = 0; i < 8; i++) {
-            uint256 root = input[i];
-            uint256 nullifierHash = input[8 + i];
+        uint256 root = input[0];
+        uint256 nullifierHash = input[1];
+        // uint256 recipientFromProof = input[2]; // Not used, but in the proof
 
-            require(!nullifierHashes[nullifierHash], "already-spent");
-            require(roots[root], "not-root");
+        require(!nullifierHashes[nullifierHash], "already-spent");
+        require(roots[root], "not-root");
 
-            nullifierHashes[nullifierHash] = true;
+        nullifierHashes[nullifierHash] = true;
 
-            address payable recipient = recipients[i];
-
-            // increment vote if recipient is a candidate
-            for (uint j = 0; j < candidates.length; j++) {
-                if (candidates[j].Candidate_Address == recipient) {
-                    candidates[j].voteCount++;
-                    break;
-                }
+        // Increment vote if recipient is a candidate
+        for (uint j = 0; j < candidates.length; j++) {
+            if (candidates[j].Candidate_Address == recipient) {
+                candidates[j].voteCount++;
+                break;
             }
-
-            (bool sent, ) = recipient.call{value: denomination}("");
-            require(sent, "payment-failed");
-
-            emit Withdrawal(recipient, nullifierHash);
         }
+
+        (bool sent, ) = recipient.call{value: denomination}("");
+        require(sent, "payment-failed");
+
+        emit Withdrawal(recipient, nullifierHash);
     }
 
     function updateAggregatedCiphertext(
