@@ -9,7 +9,7 @@ interface IVerifier {
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[12] memory input  // 4-batch: 4*3 = 12 public signals
+        uint[24] memory input
     ) external view returns (bool);
 }
 
@@ -133,22 +133,22 @@ contract Tornado is ReentrancyGuard {
         Candidate_check[cand] = true;
     }
 
-    // 4-note withdraw
+    // 8-note withdraw
     function withdraw(
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[12] memory input, // 4-batch: 4 roots | 4 nullifierHashes | 4 recipients
-        address payable[4] memory recipients // 4 recipients
+        uint[24] memory input, // 8 roots | 8 nullifierHashes | 8 recipients
+        address payable[8] memory recipients // 8 recipients
     ) external payable nonReentrant {
         require(
             IVerifier(verifier).verifyProof(a, b, c, input),
             "invalid-proof"
         );
 
-        for (uint i = 0; i < 4; i++) {  // 4 notes
+        for (uint i = 0; i < 8; i++) {
             uint256 root = input[i];
-            uint256 nullifierHash = input[4 + i];  // Offset by 4
+            uint256 nullifierHash = input[8 + i];
 
             require(!nullifierHashes[nullifierHash], "already-spent");
             require(roots[root], "not-root");
