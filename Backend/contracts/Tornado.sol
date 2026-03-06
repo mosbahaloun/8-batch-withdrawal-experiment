@@ -9,7 +9,7 @@ interface IVerifier {
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[48] memory input  // Changed from 24 to 48 (16*3)
+        uint[12] memory input  // 4-batch withdraw: 4*3 = 12 public signals
     ) external view returns (bool);
 }
 
@@ -44,6 +44,9 @@ contract Tornado is ReentrancyGuard {
     uint8 public treeLevel = 10;
     uint256 public denomination = 0.01 ether;
 
+    // BATCH_DEPOSIT = 4, matching the BatchDeposit4 circuit
+    uint256 public constant BATCH_DEPOSIT = 4;
+
     uint256 public nextLeafIdx = 0;
     mapping(uint256 => bool) public roots;
     mapping(uint8 => uint256) lastLevelHash;
@@ -63,10 +66,11 @@ contract Tornado is ReentrancyGuard {
         76840483767501885884368002925517179365815019383466879774586151314479309584255
     ];
 
-    event Deposit(
-        uint256 root,
-        uint256[10] hashPairings,
-        uint8[10] pairDirection
+    // Emitted once per batch of 4 deposits
+    event BatchDeposit(
+        uint256[4] roots,
+        uint256[4][10] hashPairings,
+        uint8[4][10] pairDirections
     );
     event Withdrawal(address to, uint256 nullifierHash);
 
@@ -94,22 +98,34 @@ contract Tornado is ReentrancyGuard {
         }
     }
 
-    function deposit(
-        uint256 _commitment,
-        uint256 _newRoot,
-        uint256[10] calldata hashPairings,
-        uint8[10] calldata hashDirections
+    /**
+     * @notice Batch deposit 4 notes in a single transaction.
+     *         Matches the BatchDeposit4 circuit which outputs 4 commitments.
+     * @param _commitments   4 commitment hashes (circuit outputs commitment[0..3])
+     * @param _newRoots      4 new Merkle roots, one per inserted leaf
+     * @param hashPairings   4×10 sibling hashes for each leaf's Merkle path
+     * @param hashDirections 4×10 direction bits (0=left, 1=right) per leaf
+     */
+    function batchDeposit(
+        uint256[4] calldata _commitments,
+        uint256[4] calldata _newRoots,
+        uint256[4][10] calldata hashPairings,
+        uint8[4][10] calldata hashDirections
     ) external payable nonReentrant {
-        require(msg.value == denomination, "incorrect-amount");
-        require(!commitments[_commitment], "existing-commitment");
-        require(!roots[_newRoot], "existing-root");
-        require(nextLeafIdx < 2 ** treeLevel, "tree-full");
+        // Must send exactly denomination × 4
+        require(msg.value == denomination * BATCH_DEPOSIT, "incorrect-amount");
+        require(nextLeafIdx + BATCH_DEPOSIT <= 2 ** treeLevel, "tree-full");
 
-        commitments[_commitment] = true;
-        roots[_newRoot] = true;
-        nextLeafIdx += 1;
+        for (uint256 i = 0; i < BATCH_DEPOSIT; i++) {
+            require(!commitments[_commitments[i]], "existing-commitment");
+            require(!roots[_newRoots[i]], "existing-root");
 
-        emit Deposit(_newRoot, hashPairings, hashDirections);
+            commitments[_commitments[i]] = true;
+            roots[_newRoots[i]] = true;
+            nextLeafIdx += 1;
+        }
+
+        emit BatchDeposit(_newRoots, hashPairings, hashDirections);
     }
 
     function addVoter(string memory _candidateNames) public {
@@ -133,22 +149,22 @@ contract Tornado is ReentrancyGuard {
         Candidate_check[cand] = true;
     }
 
-    // 16-note withdraw - Changed from 8 to 16
+    // 4-note batch withdraw (unchanged)
     function withdraw(
         uint[2] memory a,
         uint[2][2] memory b,
         uint[2] memory c,
-        uint[48] memory input, // Changed from 24 to 48: 16 roots | 16 nullifierHashes | 16 recipients
-        address payable[16] memory recipients // Changed from 8 to 16 recipients
+        uint[12] memory input, // 4 roots | 4 nullifierHashes | 4 recipients
+        address payable[4] memory recipients
     ) external payable nonReentrant {
         require(
             IVerifier(verifier).verifyProof(a, b, c, input),
             "invalid-proof"
         );
 
-        for (uint i = 0; i < 16; i++) {  // Changed from 8 to 16
-            uint256 root = input[i];
-            uint256 nullifierHash = input[16 + i];  // Changed from 8 to 16
+        for (uint i = 0; i < 4; i++) {
+            uint256 root          = input[i];
+            uint256 nullifierHash = input[4 + i];
 
             require(!nullifierHashes[nullifierHash], "already-spent");
             require(roots[root], "not-root");
@@ -157,7 +173,6 @@ contract Tornado is ReentrancyGuard {
 
             address payable recipient = recipients[i];
 
-            // increment vote if recipient is a candidate
             for (uint j = 0; j < candidates.length; j++) {
                 if (candidates[j].Candidate_Address == recipient) {
                     candidates[j].voteCount++;
